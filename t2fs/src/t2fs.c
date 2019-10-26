@@ -200,11 +200,11 @@ int tryAddRecordToBlock(int blockN, struct t2fs_record record){
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
     const int entriesPerSector = SECTOR_SIZE / sizeof(struct t2fs_record);
 
-    int i = 0, j;
+    int i, j;
     struct t2fs_record auxRecord;
 
     unsigned char buffer[SECTOR_SIZE] = {0};
-    while(i < mountedSB.blockSize){
+    for(i = 0; i < mountedSB.blockSize; i++){
         read_sector(firstPartitionSector + blockN * mountedSB.blockSize + i, buffer);
         for(j = 0; j < entriesPerSector; j++){
             memcpy(&auxRecord, buffer + j * sizeof(struct t2fs_record), sizeof(struct t2fs_record));
@@ -214,7 +214,6 @@ int tryAddRecordToBlock(int blockN, struct t2fs_record record){
                 return 0;
             }
         }
-        i++;
     }
 
     return -1;
@@ -233,7 +232,7 @@ int tryAddRecordToIndirectBlock(int blockN, struct t2fs_record record){
     unsigned char buffer[SECTOR_SIZE] = {0};
 
     while(cSector < mountedSB.blockSize){
-        diskSector = firstPartitionSector + blockN * mountedSB.blockSize;
+        diskSector = firstPartitionSector + blockN * mountedSB.blockSize + cSector;
         read_sector(diskSector, buffer);
 
         for(i = 0; i < blocksIndexesPerSector; i++){
@@ -274,7 +273,7 @@ int tryAddRecordToDoubleIndirectBlock(int blockN, struct t2fs_record record){
     unsigned char buffer[SECTOR_SIZE] = {0};
 
     while(cSector < mountedSB.blockSize){
-        diskSector = firstPartitionSector + blockN * mountedSB.blockSize;
+        diskSector = firstPartitionSector + blockN * mountedSB.blockSize + cSector;
         read_sector(diskSector, buffer);
 
         for(i = 0; i < blocksIndexesPerSector; i++){
@@ -487,8 +486,8 @@ int removeRecord(char *filename){
 Função:	Informa a identificação dos desenvolvedores do T2FS.
 -----------------------------------------------------------------------------*/
 int identify2 (char *name, int size) {
-    strncpy (name, "Bernardo Hummes - \nIvan Peter Lamb - 287692\nMaria Cecilia - ", size);
-	return 0;
+  strncpy (name, "Bernardo Hummes - 287689\nIvan Peter Lamb - 287692\nMaria Cecilia - 287703", size);
+  return 0;
 }
 
 /*-----------------------------------------------------------------------------
@@ -537,13 +536,13 @@ int format2(int partition, int sectors_per_block) {
         oSuper.inodeAreaSize++;
 
     //Tamanho do bitmap de blocos livres
-    oSuper.freeBlocksBitmapSize = oSuper.diskSize / (SECTOR_SIZE * 8);
-    if(oSuper.freeBlocksBitmapSize * (SECTOR_SIZE * 8) != oSuper.diskSize)
+    oSuper.freeBlocksBitmapSize = oSuper.diskSize / (SECTOR_SIZE * 8 * oSuper.blockSize);
+    if(oSuper.freeBlocksBitmapSize * (SECTOR_SIZE * 8 * oSuper.blockSize) != oSuper.diskSize)
         oSuper.freeBlocksBitmapSize++;
 
     //Tamanho do bitmap de iNodes
-    oSuper.freeInodeBitmapSize = (oSuper.inodeAreaSize * oSuper.blockSize * iNodesPerSector) / (SECTOR_SIZE * 8);;
-    if(oSuper.freeInodeBitmapSize * (SECTOR_SIZE * 8) != (oSuper.inodeAreaSize * oSuper.blockSize * iNodesPerSector))
+    oSuper.freeInodeBitmapSize = (oSuper.inodeAreaSize * oSuper.blockSize * iNodesPerSector) / (SECTOR_SIZE * 8 * oSuper.blockSize);
+    if(oSuper.freeInodeBitmapSize * (SECTOR_SIZE * 8 * oSuper.blockSize) != (oSuper.inodeAreaSize * oSuper.blockSize * iNodesPerSector))
         oSuper.freeInodeBitmapSize++;
 
     oSuper.Checksum = 0;
@@ -648,7 +647,7 @@ int mount(int partition) {
         return -3;
     }
 
-	if(mountedPartition == -1){
+    if(mountedPartition == -1){
         unsigned char buffer[SECTOR_SIZE] = {0};
 
         read_sector(*((int*) (mbr.partitionTable + partition*32)), buffer);
@@ -674,7 +673,7 @@ int mount(int partition) {
             printf("\033[0;32mMontada particao %d\n\033[0m", partition);
 
         return 0;
-	}
+    }
 
     if(DEBUG_MODE)
         printf("\033[0;31mFalha ao montar particao %d: Ponto de montagem ocupado\n\033[0m", partition);
@@ -696,8 +695,8 @@ int umount(void) {
     if(DEBUG_MODE)
         printf("\033[0;32mDesmontada particao %d\n\033[0m", mountedPartition);
 
-	mountedPartition = -1;
-	return 0;
+    mountedPartition = -1;
+    return 0;
 }
 
 void freeBlocskInIndirectionBlock(int blockN){
@@ -1660,5 +1659,3 @@ Saída:	Se a operação foi realizada com sucesso, a função retorna "0" (zero)
 int hln2(char *linkname, char *filename){
     return -1;
 }
-
-
