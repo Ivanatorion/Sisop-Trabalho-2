@@ -18,6 +18,8 @@ Verbosidade do Debug:
 
 #define MAX_ARQUIVOS_ABERTOS 10
 
+#define NO_ALLOC -20 //Codigo de erro usado quando nao foi possivel alocar um bloco (particao cheia)
+
 //Master Boot Record
 typedef struct mbr{
     WORD trabVersion;
@@ -93,6 +95,20 @@ void readINode(int partition, int iNodeNumber, struct t2fs_inode *iNode){
     memcpy(iNode, buffer + (iNodeNumber % iNodesPerSector) * sizeof(struct t2fs_inode), sizeof(struct t2fs_inode));
 }
 
+//Le um iNode da particao montada
+void readINodeM(int iNodeNumber, struct t2fs_inode *iNode){
+    const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
+    const int iNodesPerSector = SECTOR_SIZE / sizeof(struct t2fs_inode); //Deve ser uns 8...
+
+    unsigned char buffer[SECTOR_SIZE] = {0};
+
+    int iNodeSector = firstPartitionSector;
+    iNodeSector = iNodeSector + mountedSB.blockSize * (mountedSB.freeBlocksBitmapSize + mountedSB.freeInodeBitmapSize + mountedSB.superblockSize) + iNodeNumber / iNodesPerSector;
+
+    read_sector(iNodeSector, buffer);
+    memcpy(iNode, buffer + (iNodeNumber % iNodesPerSector) * sizeof(struct t2fs_inode), sizeof(struct t2fs_inode));
+}
+
 //Escreve um inode no disco
 void writeINode(int partition, int iNodeNumber, struct t2fs_inode iNode){
     int firstPartitionSector = *((int*) (mbr.partitionTable + partition*32));
@@ -113,8 +129,24 @@ void writeINode(int partition, int iNodeNumber, struct t2fs_inode iNode){
     write_sector(iNodeSector, buffer);
 }
 
+//Escreve um inode na particao montada
+void writeINodeM(int iNodeNumber, struct t2fs_inode iNode){
+    int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
+    int iNodesPerSector = SECTOR_SIZE / sizeof(struct t2fs_inode);
+
+    unsigned char buffer[SECTOR_SIZE] = {0};
+
+    int iNodeSector = firstPartitionSector;
+    iNodeSector = iNodeSector + mountedSB.blockSize * (mountedSB.freeBlocksBitmapSize + mountedSB.freeInodeBitmapSize + mountedSB.superblockSize) + iNodeNumber / iNodesPerSector;
+
+    read_sector(iNodeSector, buffer);
+    memcpy(buffer + (iNodeNumber % iNodesPerSector) * sizeof(struct t2fs_inode), &iNode, sizeof(struct t2fs_inode));
+    write_sector(iNodeSector, buffer);
+}
+
 //Aloca um bloco e adiciona o record nele. Retorna o numero do bloco alocado.
-DWORD addRecordToNewBlock(struct t2fs_record record){
+//Retorna NO_ALLOC se nao conseguiu alocar um bloco.
+DWORD addRecordToNewBlock(struct t2fs_record record, struct t2fs_inode *iNodeRaiz){
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
 
     unsigned char buffer[SECTOR_SIZE] = {0};
@@ -122,6 +154,12 @@ DWORD addRecordToNewBlock(struct t2fs_record record){
     openBitmap2(firstPartitionSector);
 
     DWORD newBlockNum = searchBitmap2(BITMAP_DADOS, 0);
+
+    if((int) newBlockNum <= 0){
+      closeBitmap2();
+      return NO_ALLOC;
+    }
+
     DWORD newSectorNum = firstPartitionSector + newBlockNum * mountedSB.blockSize;
     setBitmap2(BITMAP_DADOS, newBlockNum, 1);
 
@@ -135,12 +173,14 @@ DWORD addRecordToNewBlock(struct t2fs_record record){
     memcpy(buffer, &record, sizeof(struct t2fs_record));
     write_sector(newSectorNum, buffer);
 
+    iNodeRaiz->blocksFileSize++;
+
     return newBlockNum;
 }
 
 //Aloca um bloco de indices e o primeiro bloco de dados desse bloco. Adiciona o record no bloco de dados.
-//Retorna o numero do bloco de indices alocado.
-DWORD allocateIndirectBlockAndAddRecord(struct t2fs_record record){
+//Retorna o numero do bloco de indices alocado, ou NO_ALLOC se nao conseguiu alocar.
+DWORD allocateIndirectBlockAndAddRecord(struct t2fs_record record, struct t2fs_inode *iNodeRaiz){
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
 
     unsigned char buffer[SECTOR_SIZE] = {0};
@@ -148,6 +188,12 @@ DWORD allocateIndirectBlockAndAddRecord(struct t2fs_record record){
     //Aloca um bloco para servir de bloco de indices
     openBitmap2(firstPartitionSector);
     DWORD newIndirectionBlockNum = searchBitmap2(BITMAP_DADOS, 0);
+
+    if((int) newIndirectionBlockNum <= 0){
+      closeBitmap2();
+      return NO_ALLOC;
+    }
+
     setBitmap2(BITMAP_DADOS, newIndirectionBlockNum, 1);
     closeBitmap2();
 
@@ -157,7 +203,15 @@ DWORD allocateIndirectBlockAndAddRecord(struct t2fs_record record){
     for(i = 1; i < mountedSB.blockSize; i++)
         write_sector(newIndirectionSectorNum + i, buffer);
 
-    DWORD newDataBlock = addRecordToNewBlock(record);
+    DWORD newDataBlock = addRecordToNewBlock(record, iNodeRaiz);
+
+    if((int) newDataBlock == NO_ALLOC){
+      openBitmap2(firstPartitionSector);
+      setBitmap2(BITMAP_DADOS, newIndirectionBlockNum, 0);
+      closeBitmap2();
+      return NO_ALLOC;
+    }
+
     memcpy(buffer, &newDataBlock, sizeof(DWORD));
     write_sector(newIndirectionSectorNum, buffer);
 
@@ -167,7 +221,7 @@ DWORD allocateIndirectBlockAndAddRecord(struct t2fs_record record){
     return newIndirectionBlockNum;
 }
 
-DWORD allocateDoubleIndirectBlockAndAddRecord(struct t2fs_record record){
+DWORD allocateDoubleIndirectBlockAndAddRecord(struct t2fs_record record, struct t2fs_inode *iNodeRaiz){
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
 
     unsigned char buffer[SECTOR_SIZE] = {0};
@@ -175,6 +229,12 @@ DWORD allocateDoubleIndirectBlockAndAddRecord(struct t2fs_record record){
     //Aloca um bloco para servir de bloco de indices (de blocos de indices)
     openBitmap2(firstPartitionSector);
     DWORD newDoubleIndirectionBlockNum = searchBitmap2(BITMAP_DADOS, 0);
+
+    if((int) newDoubleIndirectionBlockNum <= 0){
+      closeBitmap2();
+      return NO_ALLOC;
+    }
+
     setBitmap2(BITMAP_DADOS, newDoubleIndirectionBlockNum, 1);
     closeBitmap2();
 
@@ -184,7 +244,15 @@ DWORD allocateDoubleIndirectBlockAndAddRecord(struct t2fs_record record){
     for(i = 1; i < mountedSB.blockSize; i++)
         write_sector(newDoubleIndirectionSectorNum + i, buffer);
 
-    DWORD newIndirectDataBlock = allocateIndirectBlockAndAddRecord(record);
+    DWORD newIndirectDataBlock = allocateIndirectBlockAndAddRecord(record, iNodeRaiz);
+
+    if(newIndirectDataBlock == NO_ALLOC){
+      openBitmap2(firstPartitionSector);
+      setBitmap2(BITMAP_DADOS, newDoubleIndirectionBlockNum, 0);
+      closeBitmap2();
+      return NO_ALLOC;
+    }
+
     memcpy(buffer, &newIndirectDataBlock, sizeof(DWORD));
     write_sector(newDoubleIndirectionSectorNum, buffer);
 
@@ -220,8 +288,8 @@ int tryAddRecordToBlock(int blockN, struct t2fs_record record){
 }
 
 //Tenta adicionar um record em algum bloco de dados apontado pelo bloco de indices.
-//Retorna 0 se conseguiu, ou -1 se o bloco esta cheio;
-int tryAddRecordToIndirectBlock(int blockN, struct t2fs_record record){
+//Retorna 0 se conseguiu, ou -1 se o bloco esta cheio, NO_ALLOC se nao existem mais blocos livres;
+int tryAddRecordToIndirectBlock(int blockN, struct t2fs_record record, struct t2fs_inode *iNodeRaiz){
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
     const int blocksIndexesPerSector = SECTOR_SIZE / sizeof(DWORD);
 
@@ -239,7 +307,11 @@ int tryAddRecordToIndirectBlock(int blockN, struct t2fs_record record){
             //Le o proximo ponteiro
             memcpy(&dataBlockN, buffer + i * sizeof(DWORD), sizeof(DWORD));
             if(dataBlockN == 0){ //Se for vazio, beleza! Aloca um bloco e insere o record.
-                dataBlockN = addRecordToNewBlock(record);
+                dataBlockN = addRecordToNewBlock(record, iNodeRaiz);
+
+                if(dataBlockN == NO_ALLOC)
+                  return NO_ALLOC;
+
                 memcpy(buffer + i * sizeof(DWORD), &dataBlockN, sizeof(DWORD));
                 write_sector(diskSector, buffer);
 
@@ -261,8 +333,8 @@ int tryAddRecordToIndirectBlock(int blockN, struct t2fs_record record){
 }
 
 //Tenta adicionar um record em algum lugar...
-//Retorna 0 se conseguiu, ou -1 se o bloco esta cheio (Nesse caso ja era...)
-int tryAddRecordToDoubleIndirectBlock(int blockN, struct t2fs_record record){
+//Retorna 0 se conseguiu, ou -1 se o bloco esta cheio (Nesse caso ja era...), ou NO_ALLOC se nao conseguiu alocar blocos.
+int tryAddRecordToDoubleIndirectBlock(int blockN, struct t2fs_record record, struct t2fs_inode *iNodeRaiz){
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
     const int blocksIndexesPerSector = SECTOR_SIZE / sizeof(DWORD);
 
@@ -280,7 +352,11 @@ int tryAddRecordToDoubleIndirectBlock(int blockN, struct t2fs_record record){
             //Le o proximo ponteiro
             memcpy(&dataBlockN, buffer + i * sizeof(DWORD), sizeof(DWORD));
             if(dataBlockN == 0){ //Se for vazio, beleza! Aloca um bloco e insere o record.
-                dataBlockN = allocateIndirectBlockAndAddRecord(record);
+                dataBlockN = allocateIndirectBlockAndAddRecord(record, iNodeRaiz);
+
+                if(dataBlockN == NO_ALLOC)
+                  return NO_ALLOC;
+
                 memcpy(buffer + i * sizeof(DWORD), &dataBlockN, sizeof(DWORD));
                 write_sector(diskSector, buffer);
 
@@ -290,8 +366,12 @@ int tryAddRecordToDoubleIndirectBlock(int blockN, struct t2fs_record record){
                 return 0;
             }
             else{ //Se nao for, tenta adicionar no bloco apontado.
-                if(tryAddRecordToIndirectBlock(dataBlockN, record) == 0)
+                int result = tryAddRecordToIndirectBlock(dataBlockN, record, iNodeRaiz);
+                if(result == 0)
                     return 0;
+
+                if(result == NO_ALLOC)
+                  return NO_ALLOC;
             }
         }
 
@@ -302,45 +382,72 @@ int tryAddRecordToDoubleIndirectBlock(int blockN, struct t2fs_record record){
 }
 
 //Adiciona um "record" no diretorio raiz da particao montada
-//Retorna 0 se conseguiu, ou -1 se nao conseguiu
+//Retorna 0 se conseguiu, ou -1 se nao conseguiu, ou NO_ALLOC se nao existem blocos livres.
 int addRecord(struct t2fs_record record){
     struct t2fs_inode iNodeRaiz;
     struct t2fs_inode iNodeRecord;
-    readINode(mountedPartition, 0, &iNodeRaiz);
-    readINode(mountedPartition, record.inodeNumber, &iNodeRecord);
+    readINodeM(0, &iNodeRaiz);
+    readINodeM(record.inodeNumber, &iNodeRecord);
 
     if(iNodeRaiz.dataPtr[0] == 0){
-        iNodeRaiz.dataPtr[0] = addRecordToNewBlock(record);
+        iNodeRaiz.dataPtr[0] = addRecordToNewBlock(record, &iNodeRaiz);
 
-         if(DEBUG_MODE > 2)
+        if(iNodeRaiz.dataPtr[0] == NO_ALLOC)
+          return NO_ALLOC;
+
+        if(DEBUG_MODE > 2)
             printf("\033[0;35mAlocado bloco %d como primeiro bloco de dados para o diretorio raiz\n\033[0m", iNodeRaiz.dataPtr[0]);
     }
     else{
         if(tryAddRecordToBlock(iNodeRaiz.dataPtr[0], record) == -1){
             if(iNodeRaiz.dataPtr[1] == 0){
-                iNodeRaiz.dataPtr[1] = addRecordToNewBlock(record);
+                iNodeRaiz.dataPtr[1] = addRecordToNewBlock(record, &iNodeRaiz);
+
+                if(iNodeRaiz.dataPtr[1] == NO_ALLOC)
+                  return NO_ALLOC;
 
                 if(DEBUG_MODE > 2)
                     printf("\033[0;35mAlocado bloco %d como segundo bloco de dados para o diretorio raiz\n\033[0m", iNodeRaiz.dataPtr[1]);
             }
             else{
-                if(tryAddRecordToBlock(iNodeRaiz.dataPtr[1], record) == -1){
+                int result = tryAddRecordToBlock(iNodeRaiz.dataPtr[1], record);
+
+                if(result == NO_ALLOC)
+                  return NO_ALLOC;
+
+                if(result == -1){
                     if(iNodeRaiz.singleIndPtr == 0){
-                        iNodeRaiz.singleIndPtr = allocateIndirectBlockAndAddRecord(record);
+                        iNodeRaiz.singleIndPtr = allocateIndirectBlockAndAddRecord(record, &iNodeRaiz);
+
+                        if(iNodeRaiz.singleIndPtr == NO_ALLOC)
+                            return NO_ALLOC;
 
                         if(DEBUG_MODE > 2)
                             printf("\033[0;35mAlocado bloco %d como bloco de indices para o ponteiro de indirecao simples do diretorio raiz\n\033[0m", iNodeRaiz.singleIndPtr);
                     }
                     else{
-                        if(tryAddRecordToIndirectBlock(iNodeRaiz.singleIndPtr, record) == -1){
+                        int result = tryAddRecordToIndirectBlock(iNodeRaiz.singleIndPtr, record, &iNodeRaiz);
+
+                        if(result == NO_ALLOC)
+                          return NO_ALLOC;
+
+                        if(result == -1){
                             if(iNodeRaiz.doubleIndPtr == 0){
-                                iNodeRaiz.doubleIndPtr = allocateDoubleIndirectBlockAndAddRecord(record);
+                                iNodeRaiz.doubleIndPtr = allocateDoubleIndirectBlockAndAddRecord(record, &iNodeRaiz);
+
+                                if(iNodeRaiz.doubleIndPtr == NO_ALLOC)
+                                    return NO_ALLOC;
 
                                 if(DEBUG_MODE > 2)
                                     printf("\033[0;35mAlocado bloco %d como bloco de indices de blocos de indice para o ponteiro de indirecao dupla do diretorio raiz\n\033[0m", iNodeRaiz.doubleIndPtr);
                             }
                             else{
-                                if(tryAddRecordToDoubleIndirectBlock(iNodeRaiz.doubleIndPtr, record) == -1)
+                                int result = tryAddRecordToDoubleIndirectBlock(iNodeRaiz.doubleIndPtr, record, &iNodeRaiz);
+
+                                if(result == NO_ALLOC)
+                                  return NO_ALLOC;
+
+                                if(result == -1)
                                     return -1;
                             }
                         }
@@ -350,7 +457,7 @@ int addRecord(struct t2fs_record record){
         }
     }
 
-    writeINode(mountedPartition, 0, iNodeRaiz);
+    writeINodeM(0, iNodeRaiz);
 
     if(cached_dirents == NULL){
         cached_dirents = malloc(sizeof(CACHED_DIRENTS));
@@ -458,7 +565,7 @@ int tryRemoveRecordFromDoubleIndirectBlock(DWORD blockN, char* filename){
 int removeRecord(char *filename){
 
     struct t2fs_inode iNodeRaiz;
-    readINode(mountedPartition, 0, &iNodeRaiz);
+    readINodeM(0, &iNodeRaiz);
 
     if(iNodeRaiz.dataPtr[0] == 0)
         return -1;
@@ -696,6 +803,11 @@ int umount(void) {
         printf("\033[0;32mDesmontada particao %d\n\033[0m", mountedPartition);
 
     mountedPartition = -1;
+
+    int i;
+    for(i = 0; i < MAX_ARQUIVOS_ABERTOS; i++)
+        arquivosAbertos[i].iNodeNumber = -1;
+
     return 0;
 }
 
@@ -762,6 +874,7 @@ Erros: -1 Particao nao montada
        -3 Maximo de arquivos abertos
        -4 Sem iNodes livres para o novo arquivo
        -5 Diretorio (raiz) nao aberto
+       -6 Sem espaco para novas entradas no diretorio raiz
 -----------------------------------------------------------------------------*/
 FILE2 create2 (char *filename) {
     if(mountedPartition == -1){
@@ -808,7 +921,7 @@ FILE2 create2 (char *filename) {
                 }
             }
 
-            readINode(mountedPartition, aux->iNodeNumber, &iNodeArquivo);
+            readINodeM(aux->iNodeNumber, &iNodeArquivo);
             openBitmap2(firstPartitionSector);
 
             if(iNodeArquivo.dataPtr[0] != 0){
@@ -848,7 +961,7 @@ FILE2 create2 (char *filename) {
             iNodeArquivo.singleIndPtr = 0;
             iNodeArquivo.dataPtr[0] = 0;
             iNodeArquivo.dataPtr[1] = 0;
-            writeINode(mountedPartition, aux->iNodeNumber, iNodeArquivo);
+            writeINodeM(aux->iNodeNumber, iNodeArquivo);
 
             arquivosAbertos[posArqAbertos].iNodeNumber = aux->iNodeNumber;
             strcpy(arquivosAbertos[posArqAbertos].fileName, filename);
@@ -892,9 +1005,16 @@ FILE2 create2 (char *filename) {
     strcpy(novoRecord.name, filename);
     novoRecord.inodeNumber = niNodeNovoArquivo;
 
-    addRecord(novoRecord);
+    if(addRecord(novoRecord) != 0){
+        if(DEBUG_MODE)
+            printf("\033[0;31mFalha ao criar arquivo %s : Sem entradas livres no diretorio raiz\n\033[0m", filename);
 
-    writeINode(mountedPartition, niNodeNovoArquivo, iNodeArquivo);
+        setBitmap2(BITMAP_INODE, niNodeNovoArquivo, 0);
+        closeBitmap2();
+        return -6;
+    }
+
+    writeINodeM(niNodeNovoArquivo, iNodeArquivo);
 
     closeBitmap2();
 
@@ -953,7 +1073,7 @@ int readFromIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* block){
     return 0;
 }
 
-void writeOnIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* block){
+int writeOnIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* block){
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
 
     int blockSector = 0;
@@ -971,6 +1091,12 @@ void writeOnIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* block){
     if(dataBlockN == 0){
         openBitmap2(firstPartitionSector);
         dataBlockN = searchBitmap2(BITMAP_DADOS, 0);
+
+        if((int) dataBlockN <= 0){
+            closeBitmap2();
+            return NO_ALLOC;
+        }
+
         setBitmap2(BITMAP_DADOS, dataBlockN, 1);
         closeBitmap2();
         memcpy(buffer + dataBlockIndex * sizeof(DWORD), &dataBlockN, sizeof(DWORD));
@@ -980,6 +1106,8 @@ void writeOnIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* block){
             printf("\033[0;35mAlocado bloco %d como bloco de dados para algum arquivo\n\033[0m", dataBlockN);
     }
     writeBlock(dataBlockN, block);
+
+    return 0;
 }
 
 //Retorna 0 se conseguiu ler, ou -1 se nao
@@ -1007,7 +1135,7 @@ int readFromDoubleIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* blo
     return readFromIndirectionBlock(indBlockN, dataBlockIndex % blocksPerIndirectionBlock, block);
 }
 
-void writeOnDoubleIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* block){
+int writeOnDoubleIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* block){
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
     const int blocksPerIndirectionBlock = (SECTOR_SIZE * mountedSB.blockSize) / sizeof(DWORD);
 
@@ -1030,6 +1158,12 @@ void writeOnDoubleIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* blo
     if(indBlockN == 0){
         openBitmap2(firstPartitionSector);
         indBlockN = searchBitmap2(BITMAP_DADOS, 0);
+
+        if((int) indBlockN <= 0){
+            closeBitmap2();
+            return NO_ALLOC;
+        }
+
         setBitmap2(BITMAP_DADOS, indBlockN, 1);
         closeBitmap2();
 
@@ -1043,10 +1177,21 @@ void writeOnDoubleIndirectionBlock(DWORD blockN, DWORD dataBlockIndex, char* blo
         if(DEBUG_MODE > 2)
             printf("\033[0;35mAlocado bloco %d como bloco de indices para algum arquivo\n\033[0m", indBlockN);
     }
-    writeOnIndirectionBlock(indBlockN, dataBlockIndex % blocksPerIndirectionBlock, block);
+    if(writeOnIndirectionBlock(indBlockN, dataBlockIndex % blocksPerIndirectionBlock, block) == NO_ALLOC){
+        openBitmap2(firstPartitionSector);
+        setBitmap2(BITMAP_DADOS, indBlockN, 0);
+        closeBitmap2();
+
+        if(DEBUG_MODE > 2)
+            printf("\033[0;35mLiberado bloco %d\n\033[0m", indBlockN);
+
+        return NO_ALLOC;
+    }
+
+    return 0;
 }
 
-//Retorna 0 se conseguiu escrever, ou -1 se nao.
+//Retorna 0 se conseguiu escrever, ou -1 se arquivo cheio, ou NO_ALLOC se nao conseguiu alocar blocos.
 int writeBlockToFile(DWORD fileBlockN, char* block, struct t2fs_inode *iNodeFile){
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
     const int blocksPerIndirectionBlock = (SECTOR_SIZE * mountedSB.blockSize) / sizeof(DWORD);
@@ -1058,6 +1203,15 @@ int writeBlockToFile(DWORD fileBlockN, char* block, struct t2fs_inode *iNodeFile
         if(iNodeFile->dataPtr[0] == 0){
             openBitmap2(firstPartitionSector);
             iNodeFile->dataPtr[0] = searchBitmap2(BITMAP_DADOS, 0);
+
+            if((int) iNodeFile->dataPtr[0] <= 0){
+                if(DEBUG_MODE)
+                    printf("\033[0;31mFalha ao alocar blocos para um arquivo\n\033[0m");
+
+                closeBitmap2();
+                return NO_ALLOC;
+            }
+
             setBitmap2(BITMAP_DADOS, iNodeFile->dataPtr[0], 1);
             closeBitmap2();
 
@@ -1071,6 +1225,15 @@ int writeBlockToFile(DWORD fileBlockN, char* block, struct t2fs_inode *iNodeFile
             if(iNodeFile->dataPtr[1] == 0){
                 openBitmap2(firstPartitionSector);
                 iNodeFile->dataPtr[1] = searchBitmap2(BITMAP_DADOS, 0);
+
+                if((int) iNodeFile->dataPtr[1] <= 0){
+                    if(DEBUG_MODE)
+                        printf("\033[0;31mFalha ao alocar blocos para um arquivo\n\033[0m");
+
+                    closeBitmap2();
+                    return NO_ALLOC;
+                }
+
                 setBitmap2(BITMAP_DADOS, iNodeFile->dataPtr[1], 1);
                 closeBitmap2();
 
@@ -1084,6 +1247,15 @@ int writeBlockToFile(DWORD fileBlockN, char* block, struct t2fs_inode *iNodeFile
                 if(iNodeFile->singleIndPtr == 0){
                     openBitmap2(firstPartitionSector);
                     iNodeFile->singleIndPtr = searchBitmap2(BITMAP_DADOS, 0);
+
+                    if((int) iNodeFile->singleIndPtr <= 0){
+                        if(DEBUG_MODE)
+                            printf("\033[0;31mFalha ao alocar blocos para um arquivo\n\033[0m");
+
+                        closeBitmap2();
+                        return NO_ALLOC;
+                    }
+
                     setBitmap2(BITMAP_DADOS, iNodeFile->singleIndPtr, 1);
                     closeBitmap2();
 
@@ -1094,13 +1266,27 @@ int writeBlockToFile(DWORD fileBlockN, char* block, struct t2fs_inode *iNodeFile
                     if(DEBUG_MODE > 2)
                         printf("\033[0;35mAlocado bloco %d como bloco de indices para algum arquivo\n\033[0m", iNodeFile->singleIndPtr);
                 }
-                writeOnIndirectionBlock(iNodeFile->singleIndPtr, fileBlockN - 2, block);
+                if(writeOnIndirectionBlock(iNodeFile->singleIndPtr, fileBlockN - 2, block) == NO_ALLOC){
+                    if(DEBUG_MODE)
+                        printf("\033[0;31mFalha ao alocar blocos para um arquivo\n\033[0m");
+
+                    return NO_ALLOC;
+                }
             }
             else{
                 if(fileBlockN - 2 - blocksPerIndirectionBlock < blocksPerIndirectionBlock * blocksPerIndirectionBlock){
                     if(iNodeFile->doubleIndPtr == 0){
                         openBitmap2(firstPartitionSector);
                         iNodeFile->doubleIndPtr = searchBitmap2(BITMAP_DADOS, 0);
+
+                        if((int) iNodeFile->doubleIndPtr <= 0){
+                            if(DEBUG_MODE)
+                                printf("\033[0;31mFalha ao alocar blocos para um arquivo\n\033[0m");
+
+                            closeBitmap2();
+                            return NO_ALLOC;
+                        }
+
                         setBitmap2(BITMAP_DADOS, iNodeFile->doubleIndPtr, 1);
                         closeBitmap2();
 
@@ -1111,7 +1297,12 @@ int writeBlockToFile(DWORD fileBlockN, char* block, struct t2fs_inode *iNodeFile
                         if(DEBUG_MODE > 2)
                             printf("\033[0;35mAlocado bloco %d como bloco de indices duplo para algum arquivo\n\033[0m", iNodeFile->doubleIndPtr);
                     }
-                    writeOnDoubleIndirectionBlock(iNodeFile->doubleIndPtr, fileBlockN - 2 - blocksPerIndirectionBlock, block);
+                    if(writeOnDoubleIndirectionBlock(iNodeFile->doubleIndPtr, fileBlockN - 2 - blocksPerIndirectionBlock, block) == NO_ALLOC){
+                        if(DEBUG_MODE)
+                        printf("\033[0;31mFalha ao alocar blocos para um arquivo\n\033[0m");
+
+                        return NO_ALLOC;
+                    }
                 }
                 else{
                     return -1;
@@ -1128,7 +1319,7 @@ int readBlockFromFile(DWORD fileBlockN, char* block, int iNodeN){
     const int blocksPerIndirectionBlock = (SECTOR_SIZE * mountedSB.blockSize) / sizeof(DWORD);
 
     struct t2fs_inode iNodeFile;
-    readINode(mountedPartition, iNodeN, &iNodeFile);
+    readINodeM(iNodeN, &iNodeFile);
 
     if(fileBlockN == 0){
         if(iNodeFile.dataPtr[0] == 0)
@@ -1205,7 +1396,7 @@ int delete2 (char *filename) {
                 }
             }
 
-            readINode(mountedPartition, aux->iNodeNumber, &iNodeArquivo);
+            readINodeM(aux->iNodeNumber, &iNodeArquivo);
 
             removeRecord(aux->dirent.name);
 
@@ -1246,7 +1437,7 @@ int delete2 (char *filename) {
             }
             else{
                 iNodeArquivo.RefCounter--;
-                writeINode(mountedPartition, aux->iNodeNumber, iNodeArquivo);
+                writeINodeM(aux->iNodeNumber, iNodeArquivo);
             }
 
             //Remove entrada da cache
@@ -1314,7 +1505,7 @@ FILE2 open2 (char *filename) {
                     return -4;
             }
 
-            readINode(mountedPartition, aux->iNodeNumber, &iNodeArquivo);
+            readINodeM(aux->iNodeNumber, &iNodeArquivo);
 
             arquivosAbertos[posArqAbertos].iNodeNumber = aux->iNodeNumber;
             strcpy(arquivosAbertos[posArqAbertos].fileName, filename);
@@ -1339,6 +1530,7 @@ FILE2 open2 (char *filename) {
 Função:	Função usada para fechar um arquivo.
 
 Erros: -1 Handle invalido
+       -2 Sem espaco no disco para gravar o arquivo
 -----------------------------------------------------------------------------*/
 int close2 (FILE2 handle) {
 	if(handle < 0 || handle >= MAX_ARQUIVOS_ABERTOS || arquivosAbertos[handle].iNodeNumber == -1)
@@ -1349,14 +1541,15 @@ int close2 (FILE2 handle) {
 
     if(arquivosAbertos[handle].needsToWriteOnClose == 1){
         struct t2fs_inode iNodeFile;
-        readINode(mountedPartition, arquivosAbertos[handle].iNodeNumber, &iNodeFile);
+        readINodeM(arquivosAbertos[handle].iNodeNumber, &iNodeFile);
 
-        writeBlockToFile((arquivosAbertos[handle].filePointer / arqBsize), arqB, &iNodeFile);
+        if(writeBlockToFile((arquivosAbertos[handle].filePointer / arqBsize), arqB, &iNodeFile) == NO_ALLOC)
+            return -2;
 
         if(iNodeFile.bytesFileSize < arquivosAbertos[handle].filePointer)
             iNodeFile.bytesFileSize = arquivosAbertos[handle].filePointer;
 
-        writeINode(mountedPartition, arquivosAbertos[handle].iNodeNumber, iNodeFile);
+        writeINodeM(arquivosAbertos[handle].iNodeNumber, iNodeFile);
     }
 
     arquivosAbertos[handle].iNodeNumber = -1;
@@ -1393,10 +1586,13 @@ int read2 (FILE2 handle, char *buffer, int size) {
         if(arquivosAbertos[handle].filePointer == arquivosAbertos[handle].fileSize)
             return -2;
         if(arquivosAbertos[handle].arqBufferPointer == arqBsize){
-            struct t2fs_inode iNodeFile;
-            readINode(mountedPartition, arquivosAbertos[handle].iNodeNumber, &iNodeFile);
-            writeBlockToFile((arquivosAbertos[handle].filePointer / arqBsize) - 1, arqB, &iNodeFile);
-            writeINode(mountedPartition, arquivosAbertos[handle].iNodeNumber, iNodeFile);
+            if(arquivosAbertos[handle].needsToWriteOnClose == 1){
+              struct t2fs_inode iNodeFile;
+              readINodeM(arquivosAbertos[handle].iNodeNumber, &iNodeFile);
+              writeBlockToFile((arquivosAbertos[handle].filePointer / arqBsize) - 1, arqB, &iNodeFile);
+              writeINodeM(arquivosAbertos[handle].iNodeNumber, iNodeFile);
+            }
+
             readBlockFromFile((arquivosAbertos[handle].filePointer / arqBsize), arqB, arquivosAbertos[handle].iNodeNumber);
             arquivosAbertos[handle].arqBufferPointer = 0;
         }
@@ -1432,9 +1628,12 @@ int write2 (FILE2 handle, char *buffer, int size) {
         if(arquivosAbertos[handle].arqBufferPointer == arqBsize){
             //Encheu o buffer
             struct t2fs_inode iNodeFile;
-            readINode(mountedPartition, arquivosAbertos[handle].iNodeNumber, &iNodeFile);
-            writeBlockToFile((arquivosAbertos[handle].filePointer / arqBsize) - 1, arqB, &iNodeFile);
-            writeINode(mountedPartition, arquivosAbertos[handle].iNodeNumber, iNodeFile);
+            readINodeM(arquivosAbertos[handle].iNodeNumber, &iNodeFile);
+
+            if(writeBlockToFile((arquivosAbertos[handle].filePointer / arqBsize) - 1, arqB, &iNodeFile) == NO_ALLOC)
+                return -2;
+
+            writeINodeM(arquivosAbertos[handle].iNodeNumber, iNodeFile);
             readBlockFromFile((arquivosAbertos[handle].filePointer / arqBsize), arqB, arquivosAbertos[handle].iNodeNumber);
             arquivosAbertos[handle].arqBufferPointer = 0;
         }
@@ -1463,7 +1662,7 @@ void loadDirentsOnBlockToCache(int blockN){
             if(cRecord.TypeVal != 0x00){
                 memcpy(cDirent.name, cRecord.name, 51);
                 cDirent.fileType = 0x01;
-                readINode(mountedPartition, cRecord.inodeNumber, &iNodeEntrada);
+                readINodeM(cRecord.inodeNumber, &iNodeEntrada);
                 cDirent.fileSize = iNodeEntrada.bytesFileSize;
 
                 CACHED_DIRENTS* aux = cached_dirents;
@@ -1575,7 +1774,7 @@ int opendir2 () {
     dirOpen = 1;
 
     struct t2fs_inode iNodeRaiz;
-    readINode(mountedPartition, 0, &iNodeRaiz);
+    readINodeM(0, &iNodeRaiz);
 
     if(iNodeRaiz.dataPtr[0] != 0)
         loadDirentsOnBlockToCache(iNodeRaiz.dataPtr[0]);
@@ -1608,6 +1807,7 @@ int readdir2 (DIRENT2 *dentry) {
 
     *dentry = current_dirent->dirent;
     current_dirent = current_dirent->next;
+
 	return 0;
 }
 
@@ -1629,6 +1829,10 @@ int closedir2 () {
     }
     cached_dirents = NULL;
     current_dirent = NULL;
+
+    int i;
+    for(i = 0; i < MAX_ARQUIVOS_ABERTOS; i++)
+        arquivosAbertos[i].iNodeNumber = -1;
 
     dirOpen = 0;
     return 0;
