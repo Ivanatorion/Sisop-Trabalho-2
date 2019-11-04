@@ -1853,7 +1853,7 @@ int sln2(char *linkname, char *filename){
 	if(mountedPartition == -1){
 
         if(DEBUG_MODE)
-            printf("\033[0;31mFalha ao criar arquivo %s : Nenhuma particao montada\n\033[0m", filename);
+            printf("\033[0;31mFalha ao criar arquivo %s : Nenhuma particao montada\n\033[0m", linkname);
 
         return -1;
     }
@@ -1861,7 +1861,7 @@ int sln2(char *linkname, char *filename){
     if(dirOpen == 0){
 
         if(DEBUG_MODE)
-            printf("\033[0;31mFalha ao criar arquivo %s : Diretorio nao aberto\n\033[0m", filename);
+            printf("\033[0;31mFalha ao criar arquivo %s : Diretorio nao aberto\n\033[0m", linkname);
 
         return -5;
     }
@@ -1875,7 +1875,7 @@ int sln2(char *linkname, char *filename){
         posArqAbertos++;
     if(posArqAbertos == MAX_ARQUIVOS_ABERTOS){
         if(DEBUG_MODE)
-            printf("\033[0;31mFalha ao criar arquivo %s : Maximo de arquivos abertos\n\033[0m", filename);
+            printf("\033[0;31mFalha ao criar arquivo %s : Maximo de arquivos abertos\n\033[0m", linkname);
 
         return -3;
     }
@@ -1884,11 +1884,11 @@ int sln2(char *linkname, char *filename){
 	
 	    CACHED_DIRENTS* aux = cached_dirents;
     while(aux != NULL){
-        if(!strcmp(filename, aux->dirent.name)){
+        if(!strcmp(linkname, aux->dirent.name)){
            for(j = 0; j < MAX_ARQUIVOS_ABERTOS; j++){
                 if(arquivosAbertos[j].iNodeNumber == aux->iNodeNumber){
                     if(DEBUG_MODE)
-                        printf("\033[0;31mFalha ao criar arquivo %s : Arquivo existente aberto\n\033[0m", filename);
+                        printf("\033[0;31mFalha ao criar arquivo %s : Arquivo existente aberto\n\033[0m", linkname);
 
                     return -2;
                 }
@@ -1937,7 +1937,7 @@ int sln2(char *linkname, char *filename){
             writeINodeM(aux->iNodeNumber, iNodeArquivo);
 
             arquivosAbertos[posArqAbertos].iNodeNumber = aux->iNodeNumber;
-            strcpy(arquivosAbertos[posArqAbertos].fileName, filename);
+            strcpy(arquivosAbertos[posArqAbertos].fileName, linkname);
             arquivosAbertos[posArqAbertos].filePointer = 0;
             arquivosAbertos[posArqAbertos].arqBufferPointer = 0;
             arquivosAbertos[posArqAbertos].needsToWriteOnClose = 0;
@@ -1945,7 +1945,7 @@ int sln2(char *linkname, char *filename){
             arquivosAbertos[posArqAbertos].arqBuffer = malloc(SECTOR_SIZE * mountedSB.blockSize);
 
             if(DEBUG_MODE)
-                printf("\033[0;32mCriado arquivo %s (Conteudo removido)\n\033[0m", filename);
+                printf("\033[0;32mCriado arquivo %s (Conteudo removido)\n\033[0m", linkname);
 
 
             return posArqAbertos;
@@ -1959,7 +1959,7 @@ int sln2(char *linkname, char *filename){
 
     if(niNodeNovoArquivo == -1){
         if(DEBUG_MODE)
-            printf("\033[0;31mFalha ao criar arquivo %s : Sem inodes livres\n\033[0m", filename);
+            printf("\033[0;31mFalha ao criar arquivo %s : Sem inodes livres\n\033[0m", linkname);
 
         return -4;
     }
@@ -1975,13 +1975,13 @@ int sln2(char *linkname, char *filename){
     setBitmap2(BITMAP_INODE, niNodeNovoArquivo, 1);
 
     struct t2fs_record novoRecord;
-    novoRecord.TypeVal = 0x01;  // mudar para link
-    strcpy(novoRecord.name, filename);
+    novoRecord.TypeVal = 0x02;  // mudar para link
+    strcpy(novoRecord.name, linkname);
     novoRecord.inodeNumber = niNodeNovoArquivo;
 
     if(addRecord(novoRecord) != 0){
         if(DEBUG_MODE)
-            printf("\033[0;31mFalha ao criar arquivo %s : Sem entradas livres no diretorio raiz\n\033[0m", filename);
+            printf("\033[0;31mFalha ao criar arquivo %s : Sem entradas livres no diretorio raiz\n\033[0m", linkname);
 
         setBitmap2(BITMAP_INODE, niNodeNovoArquivo, 0);
         closeBitmap2();
@@ -1993,7 +1993,7 @@ int sln2(char *linkname, char *filename){
     closeBitmap2();
 
     arquivosAbertos[posArqAbertos].iNodeNumber = novoRecord.inodeNumber;
-    strcpy(arquivosAbertos[posArqAbertos].fileName, filename);
+    strcpy(arquivosAbertos[posArqAbertos].fileName, linkname);
     arquivosAbertos[posArqAbertos].filePointer = 0;
     arquivosAbertos[posArqAbertos].needsToWriteOnClose = 0;
     arquivosAbertos[posArqAbertos].arqBufferPointer = 0;
@@ -2001,11 +2001,12 @@ int sln2(char *linkname, char *filename){
     arquivosAbertos[posArqAbertos].fileSize = 0;
 
     if(DEBUG_MODE)
-        printf("\033[0;32mCriado arquivo %s\n\033[0m", filename);
+        printf("\033[0;32mCriado arquivo %s\n\033[0m", linkname);
 
-    return posArqAbertos;
 
-    return -1;
+    int r = write2(posArqAbertos, filename, strlen(filename)+1);
+    printf("%d", r);
+    return r;
 }
 
 /*-----------------------------------------------------------------------------
@@ -2022,3 +2023,4 @@ int hln2(char *linkname, char *filename){
 	// n esquecer de add record no dir
     return -1;
 }
+

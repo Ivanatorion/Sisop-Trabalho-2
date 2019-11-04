@@ -37,8 +37,8 @@ int main(){
     create2("Sisop2.exe");
     create2("BYOB.mp3");
     create2("Novo Documento.txt");
-    //create2("Receita de Miojo.txt");
-    //create2("Notas da P2.pdf");
+    create2("Receita de Miojo.txt");
+    create2("Notas da P2.pdf");
     sln2("linktop.txt", "Senhas.txt");
 
     DIRENT2 de;
