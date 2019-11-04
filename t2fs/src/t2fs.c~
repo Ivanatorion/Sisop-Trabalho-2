@@ -1975,7 +1975,7 @@ int sln2(char *linkname, char *filename){
     setBitmap2(BITMAP_INODE, niNodeNovoArquivo, 1);
 
     struct t2fs_record novoRecord;
-    novoRecord.TypeVal = 0x01;  // mudar para link
+    novoRecord.TypeVal = 0x01;
     strcpy(novoRecord.name, filename);
     novoRecord.inodeNumber = niNodeNovoArquivo;
 
