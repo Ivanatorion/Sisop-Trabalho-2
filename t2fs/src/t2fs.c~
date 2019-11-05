@@ -42,7 +42,9 @@ typedef struct cde2{
     struct cde2* next;
     DIRENT2 dirent;
     int iNodeNumber;
+    BYTE typeVal;
 } CACHED_DIRENTS;
+
 CACHED_DIRENTS* cached_dirents = NULL;
 CACHED_DIRENTS* current_dirent;
 
@@ -1494,31 +1496,58 @@ FILE2 open2 (char *filename) {
         posArqAbertos++;
     if(posArqAbertos == MAX_ARQUIVOS_ABERTOS)
         return -3;
+    
 
     struct t2fs_inode iNodeArquivo;
 
     CACHED_DIRENTS* aux = cached_dirents;
     while(aux != NULL){
         if(!strcmp(filename, aux->dirent.name)){
-           for(j = 0; j < MAX_ARQUIVOS_ABERTOS; j++){
-                if(arquivosAbertos[j].iNodeNumber == aux->iNodeNumber)
-                    return -4;
+
+
+
+            if (aux->typeVal == TYPEVAL_REGULAR) {
+                readINodeM(aux->iNodeNumber, &iNodeArquivo);
+
+                arquivosAbertos[posArqAbertos].iNodeNumber = aux->iNodeNumber;
+                strcpy(arquivosAbertos[posArqAbertos].fileName, filename);
+                arquivosAbertos[posArqAbertos].filePointer = 0;
+                arquivosAbertos[posArqAbertos].arqBufferPointer = 0;
+                arquivosAbertos[posArqAbertos].needsToWriteOnClose = 0;
+                arquivosAbertos[posArqAbertos].fileSize = iNodeArquivo.bytesFileSize;
+                arquivosAbertos[posArqAbertos].arqBuffer = malloc(SECTOR_SIZE * mountedSB.blockSize);
+
+                if(arquivosAbertos[posArqAbertos].fileSize > 0)
+                    readBlock(iNodeArquivo.dataPtr[0], arquivosAbertos[posArqAbertos].arqBuffer);
+
+                return posArqAbertos;
             }
+            else {
+                
+                readINodeM(aux->iNodeNumber, &iNodeArquivo);
 
-            readINodeM(aux->iNodeNumber, &iNodeArquivo);
+                arquivosAbertos[posArqAbertos].iNodeNumber = aux->iNodeNumber;
+                strcpy(arquivosAbertos[posArqAbertos].fileName, filename);
+                arquivosAbertos[posArqAbertos].filePointer = 0;
+                arquivosAbertos[posArqAbertos].arqBufferPointer = 0;
+                arquivosAbertos[posArqAbertos].needsToWriteOnClose = 0;
+                arquivosAbertos[posArqAbertos].fileSize = iNodeArquivo.bytesFileSize;
+                arquivosAbertos[posArqAbertos].arqBuffer = malloc(SECTOR_SIZE * mountedSB.blockSize);
 
-            arquivosAbertos[posArqAbertos].iNodeNumber = aux->iNodeNumber;
-            strcpy(arquivosAbertos[posArqAbertos].fileName, filename);
-            arquivosAbertos[posArqAbertos].filePointer = 0;
-            arquivosAbertos[posArqAbertos].arqBufferPointer = 0;
-            arquivosAbertos[posArqAbertos].needsToWriteOnClose = 0;
-            arquivosAbertos[posArqAbertos].fileSize = iNodeArquivo.bytesFileSize;
-            arquivosAbertos[posArqAbertos].arqBuffer = malloc(SECTOR_SIZE * mountedSB.blockSize);
-
-            if(arquivosAbertos[posArqAbertos].fileSize > 0)
-                readBlock(iNodeArquivo.dataPtr[0], arquivosAbertos[posArqAbertos].arqBuffer);
-
-            return posArqAbertos;
+                if(arquivosAbertos[posArqAbertos].fileSize > 0)
+                    readBlock(iNodeArquivo.dataPtr[0], arquivosAbertos[posArqAbertos].arqBuffer);
+            
+            
+                char buffer[20000] = {0};
+                read2(posArqAbertos, buffer, 20000);
+                
+                int clos = close2(posArqAbertos);
+                
+                int handleSoftLink = open2(buffer);
+                
+                return handleSoftLink;
+            }
+            
         }
         aux = aux->next;
     }
@@ -1672,6 +1701,7 @@ void loadDirentsOnBlockToCache(int blockN){
                     current_dirent = cached_dirents;
                     aux = cached_dirents;
                     aux->iNodeNumber = cRecord.inodeNumber;
+                    aux->typeVal = cRecord.TypeVal;
                 }
                 else{
                     while(aux->next != NULL)
@@ -1679,6 +1709,7 @@ void loadDirentsOnBlockToCache(int blockN){
                     aux->next = (CACHED_DIRENTS*) malloc(sizeof(CACHED_DIRENTS));
                     aux->next->next = NULL;
                     aux->next->iNodeNumber = cRecord.inodeNumber;
+                    aux->next->typeVal = cRecord.TypeVal;
                     aux = aux->next;
                 }
 
@@ -1882,7 +1913,7 @@ int sln2(char *linkname, char *filename){
 
     struct t2fs_inode iNodeArquivo;
 	
-	    CACHED_DIRENTS* aux = cached_dirents;
+	CACHED_DIRENTS* aux = cached_dirents;
     while(aux != NULL){
         if(!strcmp(linkname, aux->dirent.name)){
            for(j = 0; j < MAX_ARQUIVOS_ABERTOS; j++){
@@ -2021,6 +2052,32 @@ Saída:	Se a operação foi realizada com sucesso, a função retorna "0" (zero)
 int hln2(char *linkname, char *filename){
 	// diz que inode é o mesmo do arquivo e aumenta o ref count do inode
 	// n esquecer de add record no dir
+	
+	int iNodeDoApontado = -1;
+	
+	CACHED_DIRENTS* aux = cached_dirents;
+    while(aux != NULL){
+        if(!strcmp(filename, aux->dirent.name)){
+            iNodeDoApontado = aux->iNodeNumber;
+            }
+        aux = aux->next;
+    }
+	
+	// adiciona um record no diretorio usando o inode do arquivo apontado
+	struct t2fs_record novoRecord;
+    novoRecord.TypeVal = 0x01;  // record do tipo arquivo regular pois hardlink
+    strcpy(novoRecord.name, linkname);
+    novoRecord.inodeNumber = iNodeDoApontado;  // mudar para o inode do arquivo apontado pelo link
+
+    if(addRecord(novoRecord) != 0){
+        if(DEBUG_MODE)
+            printf("\033[0;31mFalha ao criar arquivo %s : Sem entradas livres no diretorio raiz\n\033[0m", linkname);
+
+        setBitmap2(BITMAP_INODE, iNodeDoApontado, 0);
+        closeBitmap2();
+        return -6;
+    }
+	
     return -1;
 }
 
