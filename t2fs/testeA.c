@@ -29,7 +29,7 @@ int main(){
 
     opendir2();
 
-    create2("Texto.txt");
+    create2("Textotexto1texto2text9.txt");
     create2("Foto.jpg");
     create2("TrabalhoSisop.c");
     create2("Senhas.txt");
@@ -66,8 +66,8 @@ int main(){
 
     opendir2();
 
-    delete2("Senhas.txt");
-    delete2("linktop.txt");
+    //delete2("Senhas.txt");
+    //delete2("linktop.txt");
 
     while(!readdir2(&de)){
          printf("Nome: %s\nTamanho: %d Bytes\n\n", de.name, de.fileSize);
@@ -77,7 +77,11 @@ int main(){
     FILE2 hand1 = open2("linktop.txt");
     printf("");
 
-    read2(hand0, buffer2, szb);
+    strcpy(buffer, "AAAAA");
+    for(i = 0; i < 500; i++)
+       strcat(buffer, "BBBB");
+
+    write2(hand0, buffer, strlen(buffer));
     close2(hand0);
     printf("Buffer2: %s\n", buffer2);
 

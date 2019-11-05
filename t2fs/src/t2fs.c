@@ -877,6 +877,7 @@ Erros: -1 Particao nao montada
        -4 Sem iNodes livres para o novo arquivo
        -5 Diretorio (raiz) nao aberto
        -6 Sem espaco para novas entradas no diretorio raiz
+       -7 Nome muito longo
 -----------------------------------------------------------------------------*/
 FILE2 create2 (char *filename) {
     if(mountedPartition == -1){
@@ -893,6 +894,14 @@ FILE2 create2 (char *filename) {
             printf("\033[0;31mFalha ao criar arquivo %s : Diretorio nao aberto\n\033[0m", filename);
 
         return -5;
+    }
+
+    if(strlen(filename) > 50){
+
+	 if(DEBUG_MODE)
+            printf("\033[0;31mFalha ao criar arquivo %s : Nome muito longo\n\033[0m", filename);
+
+        return -7;
     }
 
     const int firstPartitionSector = *((int*) (mbr.partitionTable + mountedPartition*32));
@@ -2035,7 +2044,6 @@ int sln2(char *linkname, char *filename){
 
 
     int r = write2(posArqAbertos, filename, strlen(filename)+1);
-    printf("%d", r);
     return r;
 }
 
