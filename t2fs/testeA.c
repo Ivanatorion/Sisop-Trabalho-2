@@ -66,7 +66,8 @@ int main(){
 
     opendir2();
 
-    //delete2("Senhas.txt");
+    delete2("Senhas.txt");
+    delete2("linktop.txt");
 
     while(!readdir2(&de)){
          printf("Nome: %s\nTamanho: %d Bytes\n\n", de.name, de.fileSize);

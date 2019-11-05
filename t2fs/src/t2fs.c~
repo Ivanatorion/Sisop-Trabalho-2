@@ -1460,7 +1460,7 @@ int delete2 (char *filename) {
             }
 
             if(DEBUG_MODE)
-                printf("\033[0;32mDeletado o arquivo %s\n\033[0m", filename);
+                printf("\033[0;32mDeletado o arquivo (verificar se foi de fato liberado devido aos hardlinks) %s\n\033[0m", filename);
 
             return 0;
         }
@@ -1479,7 +1479,6 @@ Função:	Função que abre um arquivo existente no disco.
 Erros: -1 Nenhuma particao montada
        -2 Diretorio nao aberto
        -3 Numero maximo de arquivos abertos
-       -4 Arquivo aberto
        -5 Arquivo nao encontrado
 -----------------------------------------------------------------------------*/
 FILE2 open2 (char *filename) {
@@ -2062,7 +2061,12 @@ int hln2(char *linkname, char *filename){
             }
         aux = aux->next;
     }
-	
+    
+	struct t2fs_inode iNodeFile;
+    readINodeM(iNodeDoApontado, &iNodeFile);
+    iNodeFile.RefCounter += 1;
+    writeINodeM(iNodeDoApontado, iNodeFile);
+    
 	// adiciona um record no diretorio usando o inode do arquivo apontado
 	struct t2fs_record novoRecord;
     novoRecord.TypeVal = 0x01;  // record do tipo arquivo regular pois hardlink

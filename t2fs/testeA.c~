@@ -41,9 +41,9 @@ int main(){
     //create2("Receita de Miojo.txt");
     //create2("Notas da P2.pdf");
     
-    //hln2("linktop.txt", "Senhas.txt");
+    hln2("linktop.txt", "Senhas.txt");
     
-    sln2("linktop.txt", "Senhas.txt");
+    //sln2("linktop.txt", "Senhas.txt");
 
     DIRENT2 de;
 
@@ -67,6 +67,7 @@ int main(){
     opendir2();
 
     //delete2("Senhas.txt");
+    delete2("linktop.txt");
 
     while(!readdir2(&de)){
          printf("Nome: %s\nTamanho: %d Bytes\n\n", de.name, de.fileSize);
