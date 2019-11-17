@@ -5,6 +5,7 @@
 int main(){
     char buffer[20000] = {0};
     char buffer2[20000] = {0};
+    char buffer3[20000] = {0};
     int i;
 
     strcpy(buffer, "Batatinha quando nasce. Texto muito grande para tentar encher o coisa (bloco de indices duplo)\n");
@@ -13,12 +14,12 @@ int main(){
     strcat(buffer, "Batatinha quando nasce. Texto muito grande para tentar encher o coisa (bloco de indices duplo)\n");
     for(i = 0; i < 20; i++)
         strcat(buffer, "Batatinha quando nasce. Texto muito grande para tentar encher o coisa (bloco de indices duplo)\n");
-    for(i = 0; i < 40; i++)
-        strcat(buffer, "Batatinha quando nasce. Texto muito grande para tentar encher o coisa... Ta dificil! (bloco de indices duplo)\n");
-    for(i = 0; i < 60; i++)
-        strcat(buffer, "Batatinha quando nasce. Texto muito grande para tentar encher o coisa... Ta dificil mesmo! (bloco de indices duplo)\n");
-    for(i = 0; i < 40; i++)
-        strcat(buffer, "Agora vai, o bloco duplo vai ser usado, por favor funcione, vai ser muito tri se funcionar (bloco de indices duplo)\n");
+    //for(i = 0; i < 40; i++)
+    //    strcat(buffer, "Batatinha quando nasce. Texto muito grande para tentar encher o coisa... Ta dificil! (bloco de indices duplo)\n");
+    //for(i = 0; i < 60; i++)
+    //    strcat(buffer, "Batatinha quando nasce. Texto muito grande para tentar encher o coisa... Ta dificil mesmo! (bloco de indices duplo)\n");
+    //for(i = 0; i < 40; i++)
+    //    strcat(buffer, "Agora vai, o bloco duplo vai ser usado, por favor funcione, vai ser muito tri se funcionar (bloco de indices duplo)\n");
     strcat(buffer, "Deu :)\n");
 
     int szb = strlen(buffer) + 1;
@@ -28,7 +29,7 @@ int main(){
 
     opendir2();
 
-    create2("Texto.txt");
+    create2("Textotexto1texto2text9.txt");
     create2("Foto.jpg");
     create2("TrabalhoSisop.c");
     create2("Senhas.txt");
@@ -37,8 +38,12 @@ int main(){
     create2("Sisop2.exe");
     create2("BYOB.mp3");
     create2("Novo Documento.txt");
-    create2("Receita de Miojo.txt");
-    create2("Notas da P2.pdf");
+    //create2("Receita de Miojo.txt");
+    //create2("Notas da P2.pdf");
+    
+    hln2("linktop.txt", "Senhas.txt");
+    
+    //sln2("linktop.txt", "Senhas.txt");
 
     DIRENT2 de;
 
@@ -53,6 +58,7 @@ int main(){
     close2(7);
     close2(8);
     close2(9);
+    //close(10);
 
     closedir2();
 
@@ -61,16 +67,27 @@ int main(){
     opendir2();
 
     //delete2("Senhas.txt");
+    //delete2("linktop.txt");
 
     while(!readdir2(&de)){
          printf("Nome: %s\nTamanho: %d Bytes\n\n", de.name, de.fileSize);
     }
 
-    FILE2 hand = open2("Senhas.txt");
+    FILE2 hand0 = open2("Senhas.txt");
+    FILE2 hand1 = open2("linktop.txt");
+    printf("");
 
-    read2(hand, buffer2, szb);
-    close2(hand);
+    strcpy(buffer, "AAAAA");
+    for(i = 0; i < 500; i++)
+       strcat(buffer, "BBBB");
+
+    write2(hand0, buffer, strlen(buffer));
+    close2(hand0);
     printf("Buffer2: %s\n", buffer2);
+
+    read2(hand1, buffer3, szb);
+    close2(hand1);
+    printf("Buffer3: %s\n", buffer3);
 
     closedir2();
 

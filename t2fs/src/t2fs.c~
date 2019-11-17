@@ -2044,6 +2044,7 @@ int sln2(char *linkname, char *filename){
 
 
     int r = write2(posArqAbertos, filename, strlen(filename)+1);
+    printf("%d", r);
     return r;
 }
 
